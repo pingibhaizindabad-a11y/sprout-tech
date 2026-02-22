@@ -1,0 +1,42 @@
+// Paste into Firebase Console → Firestore Database → Rules
+// App uses snake_case fields: group_id, is_active, user_ids, is_locked
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /config/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /groups/{groupId} {
+      allow read: if request.auth != null && resource.data.is_active == true;
+      allow write: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if request.auth != null && (
+        request.auth.uid == userId ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.group_id == resource.data.group_id)
+      );
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    match /questionnaire_responses/{docId} {
+      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.user_id == request.auth.uid;
+      allow update: if request.auth != null
+        && resource.data.user_id == request.auth.uid
+        && resource.data.is_locked == false;
+      allow delete: if false;
+    }
+
+    match /matches/{matchId} {
+      allow read: if request.auth != null
+        && request.auth.uid in resource.data.user_ids;
+      allow write: if false;
+    }
+  }
+}

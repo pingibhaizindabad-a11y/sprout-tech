@@ -1,0 +1,53 @@
+# Issues log
+
+Format: Problem | Root cause | Solution
+
+---
+Problem: /admin and /join returned 500 "Missing Supabase service role env" when .env.local was not set.
+Root cause: createServiceClient() threw when SUPABASE_SERVICE_ROLE_KEY (or URL) was missing.
+Solution: Added createServiceClientIfConfigured() that returns null when env missing. Admin and join use it and show a setup message instead of crashing. Auth actions use it and return a friendly error.
+
+---
+Problem: User requested to remove Supabase and use Firebase instead.
+Root cause: N/A (feature request).
+Solution: Removed Supabase deps and all Supabase code. Added Firebase (firebase + firebase-admin). Auth via Firebase Auth (email/password); data in Firestore (groups, users, questionnaire_responses, matches). Server uses Admin SDK and auth cookie (ID token). Client uses Firebase SDK for sign in/up only. Admin and matching unchanged in behavior; all DB access now via Firestore.
+
+---
+Problem: Admin access used a single shared password; user wanted auth via email first, then any password.
+Root cause: N/A (feature request).
+Solution: Admin login now uses Firebase Email/Password. Admin enters email + password; we verify via Firebase Auth and then check email is in ADMIN_EMAILS (.env.local). Only listed emails get admin cookie. Removed ADMIN_PASSWORD. Create Group form: clarified custom code (optional) with hint "Create a custom join code or leave blank to auto-generate."
+
+---
+Problem: Full-stack completion and security: auth bugs, Firebase backend, Vercel deploy.
+Root cause: N/A (feature/hardening request).
+Solution: (1) Firebase client: added getFirebaseStorage() for avatar uploads. (2) Firebase admin: support FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY for Vercel. (3) firestore.rules and storage.rules added (snake_case to match app). (4) Auth: email validation, password min 8 + confirmation, avatar upload to Storage avatars/{uid}/profile, friendly Firebase error messages, login redirect by questionnaire_submitted. (5) User doc: questionnaire_submitted field; submit sets it true and is_locked false; admin matching locks responses. (6) runMatchingForGroup extracted; POST /api/match with ADMIN_SECRET. (7) lib/admin-utils.ts for usePasswordOnlyAdmin (avoid sync export in actions). (8) .env.local.example updated; next.config images for firebasestorage; VERCEL_DEPLOYMENT.md checklist.
+
+---
+Problem: Forgot password email not received.
+Root cause: Firebase only sends reset emails for emails that exist in Authentication → Users. Link domain must be in Authorized domains. Emails often land in spam.
+Solution: (1) sendPasswordResetEmail now uses actionCodeSettings with continueUrl (origin/auth or origin/admin) so the reset link returns to the app. (2) Success message updated to tell user to check spam and to ensure the email is in Firebase Auth → Users and the site domain is in Authentication → Settings → Authorized domains. Checklist: Firebase Console → Authentication → Sign-in method → Email/Password enabled; Users → admin email must exist; Settings → Authorized domains → add localhost and production domain.
+
+---
+Problem: Production-ready flows per spec (sign up, log in, forgot password, join, questionnaire, dashboard, matching API, admin).
+Root cause: N/A (feature completion).
+Solution: (1) Sign up: inline validation (email regex, password ≥8, confirm match), exact error messages, spinner, avatar to avatars/{uid}/profile.jpg, groupId/groupCode/groupName from sessionStorage, clear sessionStorage after signup, redirect to /questionnaire. (2) Log in: exact error messages, redirect by questionnaire_submitted + is_matched. (3) Forgot password: new page /auth/forgot-password, link from login tab, sendPasswordResetEmail with continueUrl. (4) AuthContext + useAuth in root layout; ProtectedRoute component. (5) Join: validate code without auth (validateGroupCodeOnly), sessionStorage groupId/groupName/groupCode, success 800ms, redirect to /auth; when logged in update user and redirect to questionnaire/dashboard. (6) Questionnaire: autosave on Back and Next (saveDraft). (7) Dashboard: DashboardWithRealtime with onSnapshot(users/{uid}), when isMatched fetches match client-side, waiting state has pulse. (8) Profile: avatar validation image/* and 2MB with inline errors. (9) API /api/match: Bearer ADMIN_SECRET, returns { matched, unmatched, trios }. (10) Matching: skill matrix per spec, availability penalty 30 per bracket gap >10, experienceScore 0/1/2/3+ diff → 100/75/50/25, comments on functions. (11) next.config has remotePatterns for firebasestorage; .env.local.example has ADMIN_PASSWORD optional. Firestore/storage rules remain snake_case.
+
+---
+Problem: Firebase not connected; users not saving to Firestore; admin empty; matching not working.
+Root cause: Env vars not validated with clear errors; sign-up user doc omitted some fields or write path failing silently.
+Solution: (1) lib/firebase/config.ts: requireClientEnv() lists missing NEXT_PUBLIC_* vars. (2) lib/firebase/client.ts: log "Firebase connected (client)" on first init. (3) lib/firebase/admin.ts: log "Firebase connected (Admin)" on first init; when using PROJECT_ID/CLIENT_EMAIL/PRIVATE_KEY path, log clear error if any missing. (4) Auth syncUserAndSetCookie: write full user doc (name, email, bio, avatar_url, group_id, group_code, group_name, is_matched, questionnaire_submitted, created_at with serverTimestamp); console.log("User written to Firestore:", uid); on success; console.error on failure; return clear error if Firebase Admin not configured. (5) Join: placeholder changed from "e.g. ECELL24" to "Enter code" (no hardcoded demo codes; validation already uses Firestore query with is_active). (6) Layout: in development, log Firebase project id or warn if undefined. (7) FIRESTORE_INDEXES.md added for composite indexes. Admin panel already uses real Firestore (no demo data); admin/page.tsx submittedUserIds fixed to use submitted_at (not is_locked). Build passes.
+
+---
+Problem: "Application error: a client-side exception has occurred" when Firebase env vars were missing — requireClientEnv() threw inside AuthProvider.
+Root cause: Firebase client was initialized (getApp) as soon as AuthProvider mounted, throwing before any UI could show.
+Solution: Added FirebaseEnvGuard client component that checks isFirebaseConfigured(); if false, renders a clear "Firebase not configured" page with setup instructions instead of children. Wrapped layout content in FirebaseEnvGuard so AuthProvider (and thus getFirebaseAuth()) never runs when env is missing. No more crash; user sees setup message.
+
+---
+Problem: Production readiness for Vercel deploy.
+Root cause: N/A (pre-deploy hardening).
+Solution: (1) next.config: added sprout-tech.firebasestorage.app to images.remotePatterns for avatar URLs. (2) app/api/match/route.ts: removed unused const; use single secret check. (3) app/auth/actions.ts: "User written to Firestore" log only in NODE_ENV=development. (4) VERCEL_DEPLOYMENT.md: full env list (ADMIN_SECRET, ADMIN_EMAILS, FIREBASE_*), authorized domains, Firestore indexes note. (5) README: ADMIN_SECRET and Vercel deploy pointer. Build passes.
+
+---
+Problem: Full audit per checklist — ADMIN_PASSWORD, hardcoded demo data, env, admin login, build.
+Root cause: N/A (audit request).
+Solution: (1) .env.local.example: added ADMIN_PASSWORD (optional); when set, admin can log in with allowed email + this password without Firebase Auth. (2) app/admin/actions.ts: loginAdminWithPassword(email, password) checks ADMIN_PASSWORD and ADMIN_EMAILS, sets admin cookie; createGroup uses FieldValue.serverTimestamp() for created_at. (3) AdminGate and LoginChoice: try loginAdminWithPassword first; if ok redirect; else Firebase sign-in; loading state and disabled button on admin login. (4) app/page.tsx: removed hardcoded "Aryan & Rhea" / "92% match" from Match Preview; replaced with "You & your match", "Matched in your group", "High match". (5) No hardcoded demo group codes in join; no Rhea/demo in dashboard or match page; lib/matching.ts has no Math.random(). (6) Build passes. For TEST 4 (admin with ADMIN_PASSWORD): set ADMIN_PASSWORD and ADMIN_EMAILS in .env.local, then log in at /admin with that email and password.
