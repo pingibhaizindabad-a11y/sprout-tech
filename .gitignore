@@ -30,17 +30,16 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files — never commit (secrets: API keys, service account, ADMIN_*)
+# ========== SENSITIVE — never commit ==========
+# env (API keys, Firebase client + admin, ADMIN_EMAILS, ADMIN_SECRET, ADMIN_PASSWORD)
 .env
 .env.local
 .env.*.local
 !.env.local.example
-
-# Firebase service account keys — never commit (keep only in .env.local)
+# Firebase service account key files (use FIREBASE_* in .env.local instead)
 *firebase*adminsdk*.json
 *service*account*.json
 *-firebase-adminsdk-*.json
-sprout-tech-firebase-adminsdk-fbsvc-a9f2856c4f.json
 
 # vercel
 .vercel

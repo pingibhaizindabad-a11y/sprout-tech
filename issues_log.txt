@@ -3,6 +3,16 @@
 Format: Problem | Root cause | Solution
 
 ---
+Problem: "Firebase not configured" and site errors; .env.local showed Firebase config as JavaScript/JSON.
+Root cause: .env.local was overwritten with code (import, firebaseConfig object, raw JSON) instead of KEY=value env format. Next only reads key=value; client bundle had no env.
+Solution: Killed process on port 3000, rewrote .env.local with proper keys (NEXT_PUBLIC_FIREBASE_*, FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY with \\n for newlines, ADMIN_*). Cleared .next and restarted dev server so client gets fresh env.
+
+---
+Problem: "Firebase not configured" kept appearing even though .env.local had all 6 NEXT_PUBLIC_* set; env "changing" after restarts.
+Root cause: Next inlines NEXT_PUBLIC_* into the client bundle at compile time. Cached .next or a dev server started when env was empty meant the browser received a bundle with empty process.env, so the guard (which runs in the client) saw missing vars.
+Solution: (1) Layout now reads the 6 vars on the server and passes firebaseEnvFromServer to FirebaseEnvGuard and injects window.__FIREBASE_ENV__ via a script tag. (2) FirebaseEnvGuard uses the server-passed prop to decide if Firebase is configured (no build-time dependency). (3) lib/firebase/config.ts getEnv() uses window.__FIREBASE_ENV__ on the client when present, else process.env, so Firebase client init also gets the current env. No more reliance on client bundle inlining for these vars.
+
+---
 Problem: /admin and /join returned 500 "Missing Supabase service role env" when .env.local was not set.
 Root cause: createServiceClient() threw when SUPABASE_SERVICE_ROLE_KEY (or URL) was missing.
 Solution: Added createServiceClientIfConfigured() that returns null when env missing. Admin and join use it and show a setup message instead of crashing. Auth actions use it and return a friendly error.
