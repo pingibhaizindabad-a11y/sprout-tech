@@ -1,13 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { getFirebaseAuth } from "@/lib/firebase/client";
-import { loginAdminWithPassword, verifyAdminEmailAuth } from "./actions";
+import { verifyAdminByFirebase } from "./actions";
 
 export function AdminGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
+  if (pathname === "/admin/signup") return <>{children}</>;
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -28,21 +31,10 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
     }
     setLoading(true);
     try {
-      const passwordResult = await loginAdminWithPassword(email, password);
-      if (passwordResult.ok) {
-        setLoading(false);
-        router.refresh();
-        return;
-      }
-      if (passwordResult.error && passwordResult.error !== "Invalid password.") {
-        setError(passwordResult.error);
-        setLoading(false);
-        return;
-      }
       const auth = getFirebaseAuth();
       const userCred = await signInWithEmailAndPassword(auth, email, password);
       const idToken = await userCred.user.getIdToken();
-      const result = await verifyAdminEmailAuth(idToken);
+      const result = await verifyAdminByFirebase(idToken);
       setLoading(false);
       if (!result.ok) {
         setError(result.error ?? "Access denied.");
@@ -51,10 +43,7 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
       router.refresh();
     } catch (err: unknown) {
       setLoading(false);
-      const msg =
-        err && typeof err === "object" && "message" in err
-          ? String((err as { message: string }).message)
-          : "Sign-in failed.";
+      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: string }).message) : "Sign-in failed.";
       const code = err && typeof err === "object" && "code" in err ? String((err as { code: string }).code) : "";
       if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
         setError("Invalid email or password.");
@@ -102,7 +91,7 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
             resetSent ? (
               <div className="space-y-5">
                 <div className="rounded-lg border border-[var(--accent)] bg-[var(--accent-light)] px-3.5 py-3 text-[14px] text-[var(--text)]">
-                  If an account exists for this email, you&apos;ll receive a reset link. Check your spam folder. The email must exist in Firebase (Authentication → Users) and your site domain must be in Authentication → Settings → Authorized domains.
+                  If an account exists for this email, you&apos;ll receive a reset link. Check your spam folder.
                 </div>
                 <button
                   type="button"
@@ -182,6 +171,12 @@ export function AdminGate({ children }: { children: React.ReactNode }) {
               </button>
             </form>
           )}
+          <p className="mt-6 text-center text-[13px] text-[var(--muted)]">
+            New here?{" "}
+            <Link href="/admin/signup" className="text-[var(--accent)] hover:underline">
+              Create an admin account
+            </Link>
+          </p>
         </div>
       </main>
     </div>

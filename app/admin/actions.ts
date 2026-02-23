@@ -8,102 +8,79 @@ import { cookies } from "next/headers";
 import { FieldValue } from "firebase-admin/firestore";
 
 const ADMIN_COOKIE = "sprout_admin";
-const CONFIG_ADMIN_PATH = "config/admin";
 
-/** Allowed admin emails: read from Firestore config/admin; if empty, bootstrap from ADMIN_EMAILS env and write to Firestore. */
-async function getAllowedAdminEmails(): Promise<Set<string>> {
-  const db = getAdminFirestoreIfConfigured();
-  if (!db) return new Set((process.env.ADMIN_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
-  const snap = await db.collection("config").doc("admin").get();
-  const data = snap.data();
-  const fromDoc = Array.isArray(data?.emails) ? (data.emails as string[]).map((e) => String(e).trim().toLowerCase()).filter(Boolean) : [];
-  if (fromDoc.length > 0) return new Set(fromDoc);
-  const fromEnv = (process.env.ADMIN_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
-  if (fromEnv.length > 0) {
-    await db.collection("config").doc("admin").set({ emails: fromEnv }, { merge: true });
-    return new Set(fromEnv);
-  }
-  return new Set();
-}
-
-/** If ADMIN_PASSWORD is set and matches, grant admin access for an allowed email (no Firebase Auth required). */
-export async function loginAdminWithPassword(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminPassword || adminPassword.trim() === "") return { ok: false, error: "" };
-  const allowed = await getAllowedAdminEmails();
-  if (allowed.size === 0) return { ok: false, error: "No admins configured. Set ADMIN_EMAILS in .env.local." };
-  const normalized = email.trim().toLowerCase();
-  if (!allowed.has(normalized)) return { ok: false, error: "This email is not authorized for admin access." };
-  if (password !== adminPassword) return { ok: false, error: "Invalid password." };
+/** Returns the current admin uid from cookie, or null. */
+export async function getAdminUid(): Promise<string | null> {
   const store = await cookies();
-  store.set(ADMIN_COOKIE, "1", { path: "/admin", httpOnly: true, sameSite: "lax", maxAge: 60 * 60 * 24 });
-  return { ok: true };
+  const uid = store.get(ADMIN_COOKIE)?.value?.trim();
+  return uid && /^[a-zA-Z0-9_-]+$/.test(uid) ? uid : null;
 }
 
-/** Verify admin by Firebase email auth: client signs in, sends idToken; we verify and check email is allowed. */
-export async function verifyAdminEmailAuth(idToken: string): Promise<{ ok: boolean; error?: string }> {
+export async function signOutAdmin(): Promise<void> {
+  const store = await cookies();
+  store.set(ADMIN_COOKIE, "", { path: "/admin", httpOnly: true, sameSite: "lax", maxAge: 0 });
+}
+
+export async function ensureAdminSession(): Promise<boolean> {
+  return (await getAdminUid()) != null;
+}
+
+/** Create /admins/{uid} for a newly signed-up user. Call with idToken + name/email; uses Admin SDK so no client rules. */
+export async function createAdminDoc(
+  idToken: string,
+  name: string,
+  email: string
+): Promise<{ ok: boolean; error?: string }> {
   const app = getAdminApp();
   if (!app) return { ok: false, error: "Firebase not configured." };
-  const allowed = await getAllowedAdminEmails();
-  if (allowed.size === 0) return { ok: false, error: "No admins configured. Add an admin email in the Admin panel (Admins tab) or set ADMIN_EMAILS in .env.local." };
+  const db = getAdminFirestoreIfConfigured();
+  if (!db) return { ok: false, error: "Firebase not configured." };
   try {
     const decoded = await getAuth(app).verifyIdToken(idToken);
-    const email = (decoded.email ?? "").toLowerCase();
-    if (!allowed.has(email)) return { ok: false, error: "This email is not authorized for admin access." };
-    const store = await cookies();
-    store.set(ADMIN_COOKIE, "1", { path: "/admin", httpOnly: true, sameSite: "lax", maxAge: 60 * 60 * 24 });
+    const uid = decoded.uid;
+    const ref = db.collection("admins").doc(uid);
+    const snap = await ref.get();
+    if (snap.exists) return { ok: true };
+    await ref.set({
+      uid,
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      createdAt: FieldValue.serverTimestamp(),
+    });
     return { ok: true };
   } catch {
     return { ok: false, error: "Invalid or expired sign-in. Try again." };
   }
 }
 
-export async function getAdminEmails(): Promise<string[]> {
-  if (!(await ensureAdminSession())) return [];
-  const allowed = await getAllowedAdminEmails();
-  return Array.from(allowed).sort();
-}
-
-export async function addAdminEmail(formData: FormData): Promise<{ error?: string }> {
-  if (!(await ensureAdminSession())) return { error: "Unauthorized" };
+/** Verify Firebase idToken and that user is in /admins/{uid}. Set admin cookie to uid. */
+export async function verifyAdminByFirebase(idToken: string): Promise<{ ok: boolean; error?: string }> {
+  const app = getAdminApp();
+  if (!app) return { ok: false, error: "Firebase not configured." };
   const db = getAdminFirestoreIfConfigured();
-  if (!db) return { error: "Firebase not configured." };
-  const email = (formData.get("email") as string)?.trim()?.toLowerCase() ?? "";
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Enter a valid email address." };
-  const allowed = await getAllowedAdminEmails();
-  if (allowed.has(email)) return { error: "That email is already an admin." };
-  const updated = Array.from(allowed);
-  updated.push(email);
-  updated.sort();
-  await db.collection("config").doc("admin").set({ emails: updated }, { merge: true });
-  return {};
-}
-
-export async function removeAdminEmail(formData: FormData): Promise<{ error?: string }> {
-  if (!(await ensureAdminSession())) return { error: "Unauthorized" };
-  const db = getAdminFirestoreIfConfigured();
-  if (!db) return { error: "Firebase not configured." };
-  const email = (formData.get("email") as string)?.trim()?.toLowerCase() ?? "";
-  if (!email) return { error: "Email required." };
-  const allowed = await getAllowedAdminEmails();
-  if (!allowed.has(email)) return {};
-  const updated = Array.from(allowed).filter((e) => e !== email);
-  if (updated.length === 0) return { error: "Cannot remove the last admin. Add another admin first." };
-  await db.collection("config").doc("admin").set({ emails: updated }, { merge: true });
-  return {};
-}
-
-export async function ensureAdminSession(): Promise<boolean> {
-  const store = await cookies();
-  return store.get(ADMIN_COOKIE)?.value === "1";
+  if (!db) return { ok: false, error: "Firebase not configured." };
+  try {
+    const decoded = await getAuth(app).verifyIdToken(idToken);
+    const uid = decoded.uid;
+    const adminSnap = await db.collection("admins").doc(uid).get();
+    if (!adminSnap.exists) {
+      return { ok: false, error: "You are not registered as an admin." };
+    }
+    const store = await cookies();
+    store.set(ADMIN_COOKIE, uid, { path: "/admin", httpOnly: true, sameSite: "lax", maxAge: 60 * 60 * 24 });
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Invalid or expired sign-in. Try again." };
+  }
 }
 
 export async function createGroup(formData: FormData): Promise<{ error?: string }> {
-  if (!(await ensureAdminSession())) return { error: "Unauthorized" };
+  const ownerId = await getAdminUid();
+  if (!ownerId) return { error: "Unauthorized" };
   const name = (formData.get("name") as string)?.trim();
   if (!name) return { error: "Name required." };
   const db = getAdminFirestoreIfConfigured();
-  if (!db) return { error: "Firebase not configured. Add FIREBASE_SERVICE_ACCOUNT_JSON to .env.local." };
+  if (!db) return { error: "Firebase not configured." };
   const customCode = (formData.get("code") as string)?.trim().toUpperCase();
   const code = customCode || generateCode();
   const existing = await db.collection("groups").where("code", "==", code).limit(1).get();
@@ -112,6 +89,7 @@ export async function createGroup(formData: FormData): Promise<{ error?: string 
     name,
     code,
     is_active: true,
+    owner_id: ownerId,
     created_at: FieldValue.serverTimestamp(),
   });
   return {};
@@ -124,26 +102,44 @@ function generateCode(): string {
   return s;
 }
 
-export async function setGroupActive(formData: FormData): Promise<void> {
-  if (!(await ensureAdminSession())) return;
+export async function setGroupActive(formData: FormData): Promise<{ error?: string }> {
+  const ownerId = await getAdminUid();
+  if (!ownerId) return { error: "Unauthorized" };
   const groupId = formData.get("groupId") as string;
   const isActive = formData.get("isActive") === "true";
   const db = getAdminFirestoreIfConfigured();
-  if (db) await db.collection("groups").doc(groupId).update({ is_active: isActive });
+  if (!db) return { error: "Firebase not configured." };
+  const groupSnap = await db.collection("groups").doc(groupId).get();
+  const data = groupSnap.data();
+  if (!groupSnap.exists || (data?.owner_id as string) !== ownerId) return { error: "Unauthorized" };
+  await db.collection("groups").doc(groupId).update({ is_active: isActive });
+  return {};
 }
 
-/** Run matching for a group (server-side only). Call from admin UI or API with auth already verified. */
-export async function runMatchingForGroup(groupId: string): Promise<{ error?: string; matched?: number; unmatched?: number; trios?: number }> {
+/** Run matching for a group. When called from panel, ownerId must match group.owner_id. */
+export async function runMatchingForGroup(
+  groupId: string,
+  options?: { skipOwnershipCheck?: boolean }
+): Promise<{ error?: string; matched?: number; unmatched?: number; trios?: number }> {
   const db = getAdminFirestoreIfConfigured();
-  if (!db) return { error: "Firebase not configured. Add Firebase credentials to .env.local." };
+  if (!db) return { error: "Firebase not configured." };
+
+  const groupSnap = await db.collection("groups").doc(groupId).get();
+  if (!groupSnap.exists) return { error: "Group not found." };
+  const groupData = groupSnap.data();
+  const ownerId = groupData?.owner_id as string | undefined;
+
+  if (!options?.skipOwnershipCheck) {
+    const currentUid = await getAdminUid();
+    if (!currentUid) return { error: "Unauthorized" };
+    if (ownerId !== currentUid) return { error: "You can only trigger matching for your own groups." };
+  }
 
   const usersSnap = await db.collection("users").where("group_id", "==", groupId).get();
   const userIds = usersSnap.docs.map((d) => d.id);
   if (userIds.length === 0) return { error: "No users in group." };
 
-  const responsesSnap = await db.collection("questionnaire_responses")
-    .where("group_id", "==", groupId)
-    .get();
+  const responsesSnap = await db.collection("questionnaire_responses").where("group_id", "==", groupId).get();
   const answersByUser = new Map<string, Record<string, unknown>>();
   const responseRefsToLock: import("firebase-admin/firestore").DocumentReference[] = [];
   responsesSnap.docs.forEach((d) => {
@@ -168,6 +164,9 @@ export async function runMatchingForGroup(groupId: string): Promise<{ error?: st
   existingMatches.docs.forEach((d) => batch.delete(d.ref));
   await batch.commit();
 
+  const sanitize = (obj: unknown): unknown =>
+    obj === undefined ? null : Array.isArray(obj) ? obj.map(sanitize) : obj && typeof obj === "object" ? Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined).map(([k, v]) => [k, sanitize(v)])) : obj;
+
   const matchedIds = new Set<string>();
   for (const m of result.pairMatches) {
     matchedIds.add(m.user_ids[0]);
@@ -177,7 +176,7 @@ export async function runMatchingForGroup(groupId: string): Promise<{ error?: st
       user_ids: m.user_ids,
       match_type: "pair",
       compatibility_score: m.compatibility_score,
-      match_explanation: m.match_explanation,
+      match_explanation: sanitize(m.match_explanation) as Record<string, unknown>,
       created_at: new Date(),
     });
   }
@@ -188,7 +187,7 @@ export async function runMatchingForGroup(groupId: string): Promise<{ error?: st
       user_ids: m.user_ids,
       match_type: "trio",
       compatibility_score: m.compatibility_score,
-      match_explanation: m.match_explanation,
+      match_explanation: sanitize(m.match_explanation) as Record<string, unknown>,
       created_at: new Date(),
     });
   }
@@ -196,11 +195,14 @@ export async function runMatchingForGroup(groupId: string): Promise<{ error?: st
     const userRef = db.collection("users").doc(uid);
     await userRef.update({ is_matched: true });
   }
-  const matched = result.pairMatches.length * 2 + result.trioMatches.length * 3;
-  return { matched, unmatched: result.unmatchedUserIds.length, trios: result.trioMatches.length };
+  return { matched: result.pairMatches.length * 2 + result.trioMatches.length * 3, unmatched: result.unmatchedUserIds.length, trios: result.trioMatches.length };
 }
 
 export async function triggerMatching(groupId: string): Promise<{ error?: string; matched?: number; unmatched?: number; trios?: number }> {
-  if (!(await ensureAdminSession())) return { error: "Unauthorized" };
   return runMatchingForGroup(groupId);
+}
+
+/** Set admin session from Firebase idToken (e.g. after signup). */
+export async function setAdminSession(idToken: string): Promise<{ ok: boolean; error?: string }> {
+  return verifyAdminByFirebase(idToken);
 }

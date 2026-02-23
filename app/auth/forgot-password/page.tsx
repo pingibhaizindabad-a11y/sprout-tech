@@ -6,8 +6,15 @@ import { sendPasswordResetEmail } from "firebase/auth";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 
 const AUTH_ERRORS: Record<string, string> = {
-  "auth/user-not-found": "No account found with this email.",
+  "auth/user-not-found": "No account found with this email. Sign up first, then use forgot password.",
   "auth/invalid-email": "Please enter a valid email address.",
+  "auth/unauthorized-domain":
+    "This app's domain is not allowed by Firebase. In Firebase Console go to Authentication → Settings → Authorized domains and add this site's domain (e.g. localhost or 127.0.0.1 for dev).",
+  "auth/unauthorized-continue-uri":
+    "The reset link's return URL is not allowed. In Firebase Console go to Authentication → Settings → Authorized domains and add this site's domain (e.g. localhost and 127.0.0.1 for dev), then try again.",
+  "auth/too-many-requests": "Too many attempts. Wait a few minutes and try again.",
+  "auth/operation-not-allowed":
+    "Password reset is disabled in Firebase. In Firebase Console go to Authentication → Sign-in method and enable Email/Password.",
 };
 
 export default function ForgotPasswordPage() {
@@ -32,7 +39,18 @@ export default function ForgotPasswordPage() {
       setSent(true);
     } catch (err: unknown) {
       const code = err && typeof err === "object" && "code" in err ? String((err as { code: string }).code) : "";
-      setError(AUTH_ERRORS[code] ?? "Something went wrong. Please try again.");
+      const message = err && typeof err === "object" && "message" in err ? String((err as { message: string }).message) : "";
+      const friendly = AUTH_ERRORS[code];
+      if (friendly) {
+        setError(friendly);
+      } else if (message) {
+        setError(message);
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
+      if (process.env.NODE_ENV === "development" && err) {
+        console.error("Forgot password error:", err);
+      }
     } finally {
       setLoading(false);
     }
@@ -53,7 +71,7 @@ export default function ForgotPasswordPage() {
         <div className="mt-8 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-8 shadow-sm">
           {sent ? (
             <p className="text-[14px] text-[var(--text)]">
-              Check your inbox — we sent a reset link to <strong>{email}</strong>
+              Reset link was sent to <strong>{email}</strong>. Check your inbox and spam folder.
             </p>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-5">

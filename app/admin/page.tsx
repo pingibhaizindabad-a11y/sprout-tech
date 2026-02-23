@@ -1,11 +1,17 @@
+import { redirect } from "next/navigation";
 import { getAdminFirestoreIfConfigured } from "@/lib/firebase/admin";
-import { getAdminEmails } from "./actions";
+import { getAdminUid } from "./actions";
 import { AdminPanel } from "./AdminPanel";
 import type { AdminGroup, AdminUser, AdminMatch } from "./AdminPanel";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
+  const adminUid = await getAdminUid();
+  if (!adminUid) {
+    return null;
+  }
+
   const db = getAdminFirestoreIfConfigured();
   if (!db) {
     return (
@@ -14,40 +20,39 @@ export default async function AdminPage() {
           <h1 className="font-serif text-2xl">Admin</h1>
           <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-6 text-[var(--text)]">
             <p className="font-medium">Firebase not configured</p>
-            <p className="mt-2 text-sm">
-              Add <code className="rounded bg-amber-100 px-1">FIREBASE_SERVICE_ACCOUNT_JSON</code> to{" "}
-              <code className="rounded bg-amber-100 px-1">.env.local</code> (full JSON from Firebase Console).
-            </p>
-            <p className="mt-3 text-sm">
-              Also set <code className="rounded bg-amber-100 px-1">NEXT_PUBLIC_FIREBASE_*</code> for client auth.
-            </p>
+            <p className="mt-2 text-sm">Configure Firebase credentials in your environment.</p>
           </div>
         </main>
       </div>
     );
   }
 
-  const groupsSnap = await db.collection("groups").orderBy("created_at", "desc").get();
-  const usersSnap = await db.collection("users").get();
-  const responsesSnap = await db.collection("questionnaire_responses").get();
-  const matchesSnap = await db.collection("matches").get();
+  const groupsSnap = await db.collection("groups").where("owner_id", "==", adminUid).get();
+  const groupDocs = groupsSnap.docs.sort((a, b) => {
+    const ta = (a.data().created_at as { toMillis?: () => number })?.toMillis?.() ?? 0;
+    const tb = (b.data().created_at as { toMillis?: () => number })?.toMillis?.() ?? 0;
+    return tb - ta;
+  });
+  const ownedGroupIds = new Set(groupDocs.map((d) => d.id));
 
-  const groupDocs = groupsSnap.docs;
-  const userDocs = usersSnap.docs;
   const groupById = new Map<string, { name: string; code: string }>();
   groupDocs.forEach((d) => {
     const data = d.data();
     groupById.set(d.id, { name: data.name as string, code: data.code as string });
   });
 
+  const usersSnap = await db.collection("users").get();
+  const userDocs = usersSnap.docs.filter((d) => ownedGroupIds.has((d.data().group_id as string) ?? ""));
+  const responsesSnap = await db.collection("questionnaire_responses").get();
   const submittedUserIds = new Set<string>();
   responsesSnap.docs.forEach((d) => {
     const data = d.data();
     if (data.submitted_at != null) submittedUserIds.add(data.user_id as string);
   });
 
+  const matchesSnap = await db.collection("matches").get();
+  const matchDocs = matchesSnap.docs.filter((d) => ownedGroupIds.has((d.data().group_id as string) ?? ""));
   const matchedUserIds = new Set<string>();
-  const matchDocs = matchesSnap.docs;
   matchDocs.forEach((d) => {
     const userIds = (d.data().user_ids as string[]) ?? [];
     userIds.forEach((id) => matchedUserIds.add(id));
@@ -114,11 +119,5 @@ export default async function AdminPage() {
     };
   });
 
-  const adminEmails = await getAdminEmails();
-
-  return (
-    <>
-      <AdminPanel groups={groups} users={users} matches={matches} adminEmails={adminEmails} />
-    </>
-  );
+  return <AdminPanel groups={groups} users={users} matches={matches} />;
 }

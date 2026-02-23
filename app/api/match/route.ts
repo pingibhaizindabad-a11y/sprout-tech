@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   if (!groupId || typeof groupId !== "string") {
     return NextResponse.json({ error: "Missing groupId" }, { status: 400 });
   }
-  const result = await runMatchingForGroup(groupId);
+  const result = await runMatchingForGroup(groupId, { skipOwnershipCheck: true });
   if (result?.error) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }

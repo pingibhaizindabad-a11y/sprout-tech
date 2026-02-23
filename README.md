@@ -12,17 +12,16 @@
    - **Service account**: Project settings → Service accounts → Generate new private key. You’ll use this as `FIREBASE_SERVICE_ACCOUNT_JSON`.
 
 2. **Env**  
-   `.env.local` is gitignored (never commit it). Copy `.env.local.example` to `.env.local` if needed, then set:
+   Locally: copy `.env.local.example` to `.env.local`. **Production:** set the same variables in your host (e.g. Vercel). Never commit or document real emails, passwords, or keys. Set:
    - `NEXT_PUBLIC_FIREBASE_*` — from Project settings → General → Your apps (apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId).  
    - `FIREBASE_SERVICE_ACCOUNT_JSON` — full JSON from the service account key file (paste as one line, or minified).  
-   - `ADMIN_EMAILS` — comma-separated admin emails; only these can sign in at `/admin` (Firebase Email/Password).  
-   - `ADMIN_SECRET` — long random string; required for the matching API and admin “Trigger matching”.
+   - `ADMIN_SECRET` — long random string for `POST /api/match` (cron/external). Admin sign-in is self-serve at `/admin/signup`.
 
 3. **Run**  
    `npm run dev` → [http://localhost:3000](http://localhost:3000)
 
 4. **Deploy (Vercel)**  
-   See `VERCEL_DEPLOYMENT.md`. Set the same env vars in Vercel → Settings → Environment Variables and add your Vercel domain to Firebase Auth → Authorized domains.
+   See `VERCEL_DEPLOYMENT.md`. Set all env vars in Vercel. Add your Vercel domain to Firebase Auth → Authorized domains. First admin creates an account at `/admin/signup`.
 
 ## Routes
 
@@ -32,7 +31,8 @@
 - `/questionnaire` — 5 sections, 28 questions; submit → `/dashboard`
 - `/dashboard` — Waiting or match card + link to `/match/[id]`
 - `/match/[id]` — Full match details
-- `/admin` — Email sign-in (only emails in `ADMIN_EMAILS`); create groups (custom or auto code), view users, **Trigger matching**
+- `/admin` — Firebase sign-in (must have an admin account from `/admin/signup`); create groups, view users, **Trigger matching**
+- `/admin/signup` — Create a new admin account (self-serve)
 
 ## Firestore
 

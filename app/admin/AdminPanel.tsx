@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { addAdminEmail, createGroup, removeAdminEmail, setGroupActive, triggerMatching } from "./actions";
+import { createGroup, setGroupActive, triggerMatching, signOutAdmin } from "./actions";
 import { CreateGroupForm } from "./CreateGroupForm";
 
 export type AdminGroup = {
@@ -36,20 +36,16 @@ export function AdminPanel({
   groups,
   users,
   matches,
-  adminEmails,
 }: {
   groups: AdminGroup[];
   users: AdminUser[];
   matches: AdminMatch[];
-  adminEmails: string[];
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<"groups" | "users" | "matches" | "admins">("groups");
+  const [tab, setTab] = useState<"groups" | "users" | "matches">("groups");
   const [triggeringId, setTriggeringId] = useState<string | null>(null);
   const [triggerResult, setTriggerResult] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [adminError, setAdminError] = useState<string | null>(null);
-  const [newAdminEmail, setNewAdminEmail] = useState("");
 
   async function handleCreate(formData: FormData) {
     setCreateError(null);
@@ -78,37 +74,30 @@ export function AdminPanel({
     router.refresh();
   }
 
-  async function handleAddAdmin(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setAdminError(null);
-    const fd = new FormData(e.currentTarget);
-    const result = await addAdminEmail(fd);
-    if (result?.error) setAdminError(result.error);
-    else {
-      setNewAdminEmail("");
-      router.refresh();
-    }
-  }
-
-  async function handleRemoveAdmin(email: string) {
-    if (!confirm(`Remove ${email} from admins?`)) return;
-    setAdminError(null);
-    const fd = new FormData();
-    fd.set("email", email);
-    const result = await removeAdminEmail(fd);
-    if (result?.error) setAdminError(result.error);
-    else router.refresh();
-  }
 
   const activeGroups = groups.filter((g) => g.is_active).length;
   const matchedCount = users.filter((u) => u.match_status === "Matched").length;
   const unmatchedCount = users.filter((u) => u.match_status === "Unmatched").length;
 
+  async function handleSignOut() {
+    await signOutAdmin();
+    router.refresh();
+  }
+
   return (
     <div className="mx-auto max-w-[960px] px-6 py-12 pb-20">
-      <div className="mb-9">
-        <h1 className="font-serif text-[34px] tracking-tight">Admin Panel</h1>
-        <p className="mt-1 text-[14px] text-[var(--muted)]">Manage groups, users, and matching</p>
+      <div className="mb-9 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-[34px] tracking-tight">Admin Panel</h1>
+          <p className="mt-1 text-[14px] text-[var(--muted)]">Manage groups, users, and matching</p>
+        </div>
+        <button
+          type="button"
+          onClick={handleSignOut}
+          className="rounded-[10px] border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--border)] hover:text-[var(--text)]"
+        >
+          Sign out
+        </button>
       </div>
 
       <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -131,7 +120,7 @@ export function AdminPanel({
       </div>
 
       <div className="mb-8 flex gap-1 border-b border-[var(--border)]">
-        {(["groups", "users", "matches", "admins"] as const).map((t) => (
+        {(["groups", "users", "matches"] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -142,7 +131,7 @@ export function AdminPanel({
                 : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
             }`}
           >
-            {t === "groups" ? "Groups" : t === "users" ? "Users" : t === "matches" ? "Matches" : "Admins"}
+            {t === "groups" ? "Groups" : t === "users" ? "Users" : "Matches"}
           </button>
         ))}
       </div>
@@ -386,51 +375,6 @@ export function AdminPanel({
         </div>
       )}
 
-      {tab === "admins" && (
-        <div className="space-y-6">
-          <p className="text-[14px] text-[var(--muted)]">Only these emails can sign in as admin. Add any email; they must have a Firebase Auth account (sign up once or use Forgot password to get a reset link).</p>
-          {adminError && (
-            <div className="rounded-lg border border-[#f5c6c3] bg-[#fdf1f0] px-3.5 py-2.5 text-[13px] text-[var(--danger)]">{adminError}</div>
-          )}
-          <form onSubmit={handleAddAdmin} className="flex flex-wrap items-end gap-3">
-            <div className="min-w-[200px]">
-              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">Add admin email</label>
-              <input
-                name="email"
-                type="email"
-                value={newAdminEmail}
-                onChange={(e) => setNewAdminEmail(e.target.value)}
-                placeholder="admin@example.com"
-                className="w-full rounded-[10px] border-[1.5px] border-[var(--border)] bg-[var(--bg)] px-3.5 py-2.5 text-[var(--text)] outline-none transition focus:border-[var(--accent)]"
-              />
-            </div>
-            <button type="submit" className="rounded-[10px] bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white hover:bg-[var(--accent-hover)]">Add admin</button>
-          </form>
-          <div className="overflow-hidden rounded-[14px] border border-[var(--border)] bg-[var(--surface)]">
-            <div className="border-b border-[var(--border)] px-5 py-4">
-              <h3 className="text-[15px] font-semibold">Admin emails</h3>
-            </div>
-            <ul className="divide-y divide-[var(--border)]">
-              {adminEmails.length === 0 ? (
-                <li className="px-5 py-8 text-center text-[14px] text-[var(--muted)]">No admins yet. Add one above or set ADMIN_EMAILS in .env.local to bootstrap.</li>
-              ) : (
-                adminEmails.map((email) => (
-                  <li key={email} className="flex items-center justify-between px-5 py-3.5">
-                    <span className="text-[14px]">{email}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveAdmin(email)}
-                      className="rounded-lg border border-[#f5c6c3] bg-[#fdf1f0] px-3 py-1.5 text-[12px] font-medium text-[var(--danger)] hover:bg-[#fce8e6]"
-                    >
-                      Remove
-                    </button>
-                  </li>
-                ))
-              )}
-            </ul>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

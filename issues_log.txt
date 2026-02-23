@@ -3,6 +3,31 @@
 Format: Problem | Root cause | Solution
 
 ---
+Problem: Production readiness check before deploy.
+Root cause: N/A (audit).
+Solution: (1) Build passes. (2) Auth: user join → sessionStorage group → /auth → syncUserAndSetCookie with group; admin signup at /admin/signup via createAdminDoc (server) + setAdminSession; cookie secure in production. (3) API /api/match: ADMIN_SECRET only, no secrets in response. (4) Firestore/storage rules reviewed; data isolated by owner_id. (5) README and VERCEL_DEPLOYMENT.md updated (no ADMIN_EMAILS/ADMIN_PASSWORD). (6) console.log in auth/actions gated to NODE_ENV=development. Deploy: set env in Vercel, deploy firestore.rules and storage.rules in Firebase Console, add Vercel domain to Firebase Auth authorized domains.
+
+---
+Problem: Admin signup showed "Missing or insufficient permissions" when submitting the form.
+Root cause: Client-side setDoc to /admins/{uid} was denied by Firestore (rules may be undeployed or auth timing); client writes are subject to security rules.
+Solution: Create admin doc on the server with Admin SDK. Added createAdminDoc(idToken, name, email) in app/admin/actions.ts; signup page now calls createAdminDoc then setAdminSession instead of client setDoc. Admin SDK bypasses Firestore rules so signup works regardless of deployed rules.
+
+---
+Problem: "New here? Create an admin account" did not show or create an account.
+Root cause: Admin layout wraps all unauthenticated /admin/* in AdminGate; AdminGate never rendered children, so at /admin/signup the login form was still shown and the signup page was never visible.
+Solution: In AdminGate, use usePathname(); when pathname === "/admin/signup", render children so the signup page is displayed. Link to /admin/signup was already correct.
+
+---
+Problem: Self-serve admin signup and data isolation per spec.
+Root cause: N/A (feature).
+Solution: (1) New collection /admins/{uid} with uid, name, email, createdAt. (2) Groups now have owner_id (admin uid who created them). (3) /admin/signup: name, email, password, confirm; createUserWithEmailAndPassword + write /admins/{uid}, then setAdminSession(idToken), redirect to /admin. (4) Admin login at /admin: Firebase Auth only; verifyAdminByFirebase(idToken) checks /admins/{uid} exists, sets cookie to uid. "You are not registered as an admin" if not in admins. (5) Data isolation: admin page queries groups where owner_id == getAdminUid(); users and matches filtered to owned groups. createGroup sets owner_id; setGroupActive and triggerMatching verify group ownership. (6) Removed ADMIN_EMAILS, ADMIN_PASSWORD, Admins tab, loginAdminWithPassword, verifyAdminEmailAuth. Kept ADMIN_SECRET for POST /api/match (skipOwnershipCheck for cron). (7) Firestore rules: /admins read,create by owner; /groups read/create/update by owner_id. (8) Auth /login: Admin choice redirects to /admin. (9) Sign out in panel calls signOutAdmin().
+
+---
+Problem: Firestore error when saving matches: "Cannot use 'undefined' as a Firestore value (found in field 'match_explanation.complementary_strength')".
+Root cause: match_explanation from runMatching() can have optional fields set to undefined; Firestore rejects undefined.
+Solution: In app/admin/actions.ts, before writing to matches collection, sanitize match_explanation with a recursive helper that omits undefined values (and converts top-level undefined to null) so only Firestore-safe values are written.
+
+---
 Problem: "Firebase not configured" and site errors; .env.local showed Firebase config as JavaScript/JSON.
 Root cause: .env.local was overwritten with code (import, firebaseConfig object, raw JSON) instead of KEY=value env format. Next only reads key=value; client bundle had no env.
 Solution: Killed process on port 3000, rewrote .env.local with proper keys (NEXT_PUBLIC_FIREBASE_*, FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY with \\n for newlines, ADMIN_*). Cleared .next and restarted dev server so client gets fresh env.
@@ -36,6 +61,11 @@ Solution: (1) Firebase client: added getFirebaseStorage() for avatar uploads. (2
 Problem: Forgot password email not received.
 Root cause: Firebase only sends reset emails for emails that exist in Authentication → Users. Link domain must be in Authorized domains. Emails often land in spam.
 Solution: (1) sendPasswordResetEmail now uses actionCodeSettings with continueUrl (origin/auth or origin/admin) so the reset link returns to the app. (2) Success message updated to tell user to check spam and to ensure the email is in Firebase Auth → Users and the site domain is in Authentication → Settings → Authorized domains. Checklist: Firebase Console → Authentication → Sign-in method → Email/Password enabled; Users → admin email must exist; Settings → Authorized domains → add localhost and production domain.
+
+---
+Problem: User reports Firebase doesn't send forgot-password email after submitting.
+Root cause: Same as above: (1) Email must exist in Authentication → Users. (2) App domain (e.g. localhost or 127.0.0.1) must be in Authentication → Settings → Authorized domains or the reset link is invalid. (3) Emails often go to spam; some providers (e.g. Microsoft 365) block Firebase emails.
+Solution: Updated /auth/forgot-password success message with a short troubleshooting list: check spam, confirm user exists in Firebase Auth → Users, confirm domain in Authorized domains (localhost / 127.0.0.1 for dev), try personal Gmail if work email blocks. No code change to sendPasswordResetEmail (already correct).
 
 ---
 Problem: Production-ready flows per spec (sign up, log in, forgot password, join, questionnaire, dashboard, matching API, admin).

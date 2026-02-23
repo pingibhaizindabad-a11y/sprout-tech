@@ -1,12 +1,13 @@
 # Vercel Deployment Checklist
 
+**Production:** Never put real emails, passwords, or API keys in the repo or in documentation. Set all values only in Vercel → Settings → Environment Variables (or your host’s env). Users and admins never see or edit `.env` files.
+
 1. **Environment variables**  
    In Vercel → Project → Settings → Environment Variables, add **all** vars from `.env.local.example` for **Production** (and Preview if you want):
    - **NEXT_PUBLIC_FIREBASE_*** (6 vars) — from Firebase Console → Project settings → General → Your apps (Web).
    - **FIREBASE_SERVICE_ACCOUNT_JSON** — paste the full service account JSON as one line (single-quoted in Vercel if needed).  
      Or use **FIREBASE_PROJECT_ID**, **FIREBASE_CLIENT_EMAIL**, **FIREBASE_PRIVATE_KEY** (Vercel-friendly): for `FIREBASE_PRIVATE_KEY`, paste the key with literal `\n` for newlines.
-   - **ADMIN_EMAILS** — comma-separated admin emails (e.g. `you@example.com`).
-   - **ADMIN_SECRET** — long random string; required for `/api/match` (trigger matching from admin panel or cron). Generate with `openssl rand -hex 32`.
+   - **ADMIN_SECRET** — long random string for `POST /api/match` (cron or external trigger). Generate with `openssl rand -hex 32`. Admin sign-in is self-serve at `/admin/signup` (no ADMIN_EMAILS or ADMIN_PASSWORD).
 
 2. **Firebase Auth authorized domains**  
    Firebase Console → Authentication → Settings → Authorized domains → Add:

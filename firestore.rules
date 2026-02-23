@@ -1,16 +1,25 @@
 // Paste into Firebase Console → Firestore Database → Rules
-// App uses snake_case fields: group_id, is_active, user_ids, is_locked
+// App uses snake_case fields: group_id, is_active, user_ids, is_locked, owner_id
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    match /admins/{adminId} {
+      allow read, create: if request.auth != null && request.auth.uid == adminId;
+      allow update, delete: if false;
+    }
 
     match /config/{document=**} {
       allow read, write: if false;
     }
 
     match /groups/{groupId} {
-      allow read: if request.auth != null && resource.data.is_active == true;
-      allow write: if false;
+      allow read: if request.auth != null && resource.data.owner_id == request.auth.uid;
+      allow create: if request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+      allow update: if request.auth != null
+        && resource.data.owner_id == request.auth.uid;
+      allow delete: if false;
     }
 
     match /users/{userId} {
